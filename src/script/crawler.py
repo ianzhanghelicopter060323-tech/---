@@ -24,9 +24,21 @@ def craw_wiki_data() :
     # 百度百科《乘风破浪的姐姐》url
     url = 'http://127.0.0.1:5000'
 
-    # try:
+    try:
         # 向服务器发起请求，返回html文本
-    respond = requests.get(url, headers=headers)
-    print(respond)
-    #except:
+        respond = requests.get(url, headers=headers)
+        # 用BeautifulSoup提取html的信息
+        soup = BeautifulSoup(respond.text, "lxml")
+
+        # 找'table'标签，并将其保存为一个对象（保存了表格中的信息，可供后取用）
+        # table对象将信息嵌套保存，故可以像循环一样遍历
+        table = soup.find("table", id="articles-table") # 标签名 + 属性”查找
+
+        for row in table.select("tbody tr") : # 用 CSS 选择器查找
+            title = row.find("td", class_="title").get_text(strip=True)
+            print(title)
+
+    except Exception as e:
+        print(e)
+
 

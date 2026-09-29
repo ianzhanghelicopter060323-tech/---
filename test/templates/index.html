@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>本地爬虫练习站</title>
+</head>
+<body>
+  <h1 id="site-title">本地爬虫练习站</h1>
+  <p>以下为练习用的模拟文章数据，数值列可以直接用于统计。</p>
+  <table id="articles-table" border="1">
+    <caption>文章列表</caption>
+    <thead>
+      <tr>
+        <th>序号</th>
+        <th>标题</th>
+        <th>作者</th>
+        <th>分类</th>
+        <th>发布年份</th>
+        <th>字数</th>
+        <th>浏览量</th>
+        <th>简介</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for article in articles %}
+      <tr class="article-row">
+        <td class="index">{{ loop.index }}</td>
+        <td class="title">{{ article.title }}</td>
+        <td class="author">{{ article.author }}</td>
+        <td class="category">{{ article.category }}</td>
+        <td class="year">{{ article.year }}</td>
+        <td class="word-count">{{ article.word_count }}</td>
+        <td class="views">{{ article.views }}</td>
+        <td class="summary">{{ article.summary }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</body>
+</html>
