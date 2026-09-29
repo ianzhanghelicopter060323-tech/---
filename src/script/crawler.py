@@ -38,4 +38,61 @@ def craw_wiki_data() -> Optional[Tag]:
     except Exception as e:
         print(e)
 
+"""
+解析爬到的数据。保存为json
+每个作者的信息诸行按照门类保存为字典
+所有行字典， 安顺序加入列表， 最终根据这个雷霆大列表保存为json
+"""
+def pare_wiki_data(table: Optional[Tag]) -> None :
+    table_bs = BeautifulSoup(str(table), 'lxml')
+    # table诸行存储
+    trs_all = table_bs.find_all('tr')
+
+
+
+    full_authors = [] # 记录作者
+
+    for tr in trs_all :
+        row_author = {} # 单行
+
+        index = tr.find("td", class_="index")
+        title = tr.find("td", class_="title")
+        author = tr.find("td", class_="author")
+        category = tr.find("td", class_="category")
+        year = tr.find("td", class_="year")
+        word_count = tr.find("td", class_="word-count")
+        views = tr.find("td", class_="views")
+        summary = tr.find("td", class_="summary")
+
+        # 不这么写index author .... 至少一个可能是None（其实不会）
+        if (index is not None )and (title is not None) and (author is not None) and (category is not None) and (year is not None) and (word_count is not None) and (views is not None) and (summary is not None) :
+            row_author = {
+                "index"      : index.get_text(strip=True),
+                "title"      : title.get_text(strip=True),
+                "author"     : author.get_text(strip=True),
+                "category"   : category.get_text(strip=True),
+                "year"       : year.get_text(strip=True),
+                "word_count" : word_count.get_text(strip=True),
+                "views"      : views.get_text(strip=True),
+                "summary"    : summary.get_text(strip=True)
+            }
+        full_authors.append(row_author)
+
+        # JSON 写入
+        # opne("路径", "写入模式"， “编码格式”)
+        with open("data/infor.json", "w", encoding="utf-8") as f :
+            # ensure_ascii=False 中文原字显示
+            # indent = 2 两个空格缩进
+            json.dump(full_authors, f, ensure_ascii=False, indent=2)
+
+
+    
+
+        
+
+
+
+
+
+
 
