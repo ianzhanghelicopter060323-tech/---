@@ -2,20 +2,20 @@ import json
 import re
 import requests
 import datetime
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, Tag
 import os
-
+from typing import Optional
 
 """
 爬取数据：
-    总的来说的原理：本质上是向服务器发出http请求，服务器返回html后，
+    总的来说的原理: 本质上是向服务器发出http请求,服务器返回html后,
     程序脚本根据html的标签分析需要的信息并返回
 
-    请求头与网址设定：headers 是一个 Python 字典，用于设置 HTTP 请求头。
+    请求头与网址设定: headers 是一个 Python 字典，用于设置 HTTP 请求头。
     请求头是随请求发送给服务器的附加信息，其中 User-Agent 用于描述发起请求的客户端。
     请求头会随请求信息一并发给网页服务器
 """
-def craw_wiki_data() :
+def craw_wiki_data() -> Optional[Tag]: 
     # 请求头
     # 本机为 ubuntu 但 windows 本身表示兼容标志，和实际系统无关
     headers = {
@@ -34,10 +34,7 @@ def craw_wiki_data() :
         # table对象将信息嵌套保存，故可以像循环一样遍历
         table = soup.find("table", id="articles-table") # 标签名 + 属性”查找
 
-        for row in table.select("tbody tr") : # 用 CSS 选择器查找
-            title = row.find("td", class_="title").get_text(strip=True)
-            print(title)
-
+        return table
     except Exception as e:
         print(e)
 
