@@ -66,7 +66,7 @@ def show_bar_year() -> None :
     )
 
     # 绘图
-    # 创建绘图区
+    # 加载本地中文字体后创建绘图区，使标题和标签能够正常显示中文
     set_chinese_font()
     plt.figure(figsize=(15, 8))
 
@@ -85,7 +85,7 @@ def show_bar_year() -> None :
     plt.yticks(fontsize=20)
     plt.legend()
 
-    plt.title('''Flask test: books and years they published''',fontsize = 24)
+    plt.title('书籍出版年份分布', fontsize=24)
     PICTURE_DIR.mkdir(parents=True, exist_ok=True)
     plt.savefig(PICTURE_DIR / "publishing_years_bar.jpg")
 
