@@ -56,69 +56,126 @@ sys.path.append('/home/aistudio/external-libraries')
 一、爬取百度百科中《乘风破浪的姐姐》中所有参赛嘉宾信息，返回页面数据
 In [2]
 import json
-import re
 import requests
 import datetime
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, Tag
 import os
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
+from urllib.parse import quote
 
 
-def crawl_wiki_data():
+# 根据当前脚本位置确定项目根目录，避免从其他目录运行时找不到 data 文件夹。
+PROJECT_ROOT = Path.cwd()
+BAIKE_HTML_PATH = PROJECT_ROOT / 'data' / 'chengfengpolang_season1_baike.html'
+STARS_JSON_PATH = PROJECT_ROOT / 'data' / 'stars.json'
+
+
+def _inline_link(cell: Dict) -> Optional[Tuple[str, int]]:
+    """从新版百科页面的表格单元格数据中取出第一个个人词条链接。"""
+    for paragraph in cell.get('content', []):
+        for item in paragraph.get('content', []):
+            if item.get('tag') == 'innerlink' and item.get('lemmaId'):
+                return item['text'].strip(), int(item['lemmaId'])
+    return None
+
+
+def _guest_lemma_ids(soup: BeautifulSoup) -> Dict[str, int]:
+    """从 HTML 内嵌的 __NEXT_DATA__ 中读取参赛嘉宾姓名和词条 ID。"""
+    data_tag = soup.find('script', id='__NEXT_DATA__')
+    if not isinstance(data_tag, Tag) or not data_tag.string:
+        raise ValueError('HTML 中没有找到 __NEXT_DATA__')
+
+    content = json.loads(str(data_tag.string))['props']['pageProps']['pageData']['structuredContent']
+    for section in content:
+        if not isinstance(section, list):
+            continue
+        in_guest_section = False
+        for item in section:
+            if not isinstance(item, dict):
+                continue
+            if item.get('tag') == 'header' and item.get('level') == 1:
+                in_guest_section = item.get('title') == '参演嘉宾'
+            table_data = item.get('content') if in_guest_section else None
+            if not isinstance(table_data, dict) or table_data.get('caption') != '按姓氏首字母排序':
+                continue
+
+            lemma_ids = {}
+            for row in table_data.get('rows', [])[1:]:
+                cells = row.get('cells', [])
+                if cells:
+                    link = _inline_link(cells[0])
+                    if link is not None:
+                        name, lemma_id = link
+                        lemma_ids[name] = lemma_id
+            return lemma_ids
+    raise ValueError('没有找到参赛嘉宾表格数据')
+
+
+def craw_wiki_data(html_path=BAIKE_HTML_PATH):
     """
-    爬取百度百科中《乘风破浪的姐姐》中嘉宾信息，返回html
+    读取本地保存的《乘风破浪的姐姐第一季》百科 HTML，返回参赛嘉宾表格。
     """
-    headers = { 
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/67.0.3396.99 Safari/537.36'
-    }
-    url='https://baike.baidu.com/item/乘风破浪的姐姐'                         
-
     try:
-        response = requests.get(url,headers=headers)
-        #将一段文档传入BeautifulSoup的构造方法,就能得到一个文档的对象, 可以传入一段字符串
-        soup = BeautifulSoup(response.text,'lxml')     
-          
-        #返回所有的<table>所有标签
-        tables = soup.find_all('table')
-        crawl_table_title = "按姓氏首字母排序"
-        for table in  tables:           
-            #对当前节点前面的标签和字符串进行查找
-            table_titles = table.find_previous('div')
-            for title in table_titles:
-                if(crawl_table_title in title):
-                    return table       
-    except Exception as e:
+        # 读取前一阶段已保存的 HTML，避免再次请求网站并触发安全验证。
+        with open(html_path, 'r', encoding='utf-8') as f:
+            soup = BeautifulSoup(f.read(), 'lxml')
+
+        # 在“按姓氏首字母排序”标题所在的模块中找到参赛嘉宾表。
+        # 逐个检查 div 的完整文本，避免 find(string=回调) 的类型重载歧义。
+        caption = None
+        for div in soup.find_all('div'):
+            if isinstance(div, Tag) and div.get_text(strip=True) == '按姓氏首字母排序':
+                caption = div
+                break
+        module = caption.find_parent('div', attrs={'data-module-type': 'table'}) if isinstance(caption, Tag) else None
+        table = module.find('table') if isinstance(module, Tag) else None
+        if not isinstance(table, Tag):
+            raise ValueError('HTML 中没有找到参赛嘉宾表')
+
+        # 新版页面把个人词条 ID 放在 __NEXT_DATA__，按姓名标记到对应的表格节点。
+        lemma_ids = _guest_lemma_ids(soup)
+        for tr in table.find_all('tr')[1:]:
+            td = tr.find('td')
+            name_node = td.find('span') if isinstance(td, Tag) else None
+            if isinstance(name_node, Tag) and name_node.get_text(strip=True) in lemma_ids:
+                name_node['data-lemma-id'] = str(lemma_ids[name_node.get_text(strip=True)])
+        return table
+    except (FileNotFoundError, ValueError, OSError) as e:
         print(e)
+        return None
 
 二、对爬取的参赛嘉宾页面数据进行解析，并保存为JSON文件
 In [3]
-def parse_wiki_data(table_html):
+def pare_wiki_data(table_html, output_path=STARS_JSON_PATH):
     '''
-    解析得到选手信息，包括包括选手姓名和选手个人百度百科页面链接，存JSON文件,保存到work目录下
+    解析参赛嘉宾表，保存选手姓名和个人百度百科页面链接到 data/stars.json。
     '''
-    bs = BeautifulSoup(str(table_html),'lxml')
+    if table_html is None:
+        return
+
+    bs = BeautifulSoup(str(table_html), 'lxml')
     all_trs = bs.find_all('tr')
 
     stars = []
-    for tr in all_trs:
-         all_tds = tr.find_all('td')   #tr下面所有的td          
+    for tr in all_trs[1:]:  # 跳过“嘉宾介绍 / 嘉宾海报”表头
+        td = tr.find('td')
+        name_node = td.find('span', attrs={'data-lemma-id': True}) if isinstance(td, Tag) else None
+        if not isinstance(name_node, Tag):
+            continue
 
-         for td in  all_tds:
-             #star存储选手信息，包括选手姓名和选手个人百度百科页面链接
-             star = {}    
-             if td.find('a'):
-                 #找选手名称和选手百度百科连接
-                 if td.find_next('a'):
-                    star["name"]=td.find_next('a').text
-                    star['link'] =  'https://baike.baidu.com' + td.find_next('a').get('href')
+        # 保存姓名和由词条 ID 组成的个人百科链接。
+        name = name_node.get_text(strip=True)
+        stars.append({
+            'name': name,
+            'link': 'https://baike.baidu.com/item/{}/{}'.format(
+                quote(name), name_node['data-lemma-id']
+            ),
+        })
 
-                 elif td.find_next('div'):
-                     star["name"]=td.find_next('div').find('a').text
-                     star['link'] = 'https://baike.baidu.com' + td.find_next('div').find('a').get('href')
-                 stars.append(star)
-      
-    json_data = json.loads(str(stars).replace("\'","\""))   
-    with open('work/' + 'stars.json', 'w', encoding='UTF-8') as f:
-        json.dump(json_data, f, ensure_ascii=False)
+    # 直接保存 Python 列表，不再通过字符串替换来构造 JSON。
+    with open(output_path, 'w', encoding='UTF-8') as f:
+        json.dump(stars, f, ensure_ascii=False, indent=2)
 三、爬取每个选手的百度百科页面的信息，并进行保存
 In [4]
 def crawl_everyone_wiki_urls():
@@ -210,16 +267,13 @@ def down_save_pic(name,pic_urls):
 In [6]
 if __name__ == '__main__':
 
-     #爬取百度百科中《乘风破浪的姐姐》中参赛选手信息，返回html
-     html = crawl_wiki_data()
+     #读取本地百科 HTML，返回参赛嘉宾表格
+     html = craw_wiki_data()
 
-     #解析html,得到选手信息，保存为json文件
-     parse_wiki_data(html)
+     #解析表格，得到选手姓名和个人百科链接，保存为 data/stars.json
+     pare_wiki_data(html)
 
-     #从每个选手的百度百科页面上爬取,并保存
-     crawl_everyone_wiki_urls()
-
-     print("所有信息爬取完成！")
+     print("参赛嘉宾名单解析完成！")
 数据分析
 In [7]
 # 下载中文字体
