@@ -1,13 +1,15 @@
 import json
+import time
 import requests
 from bs4 import BeautifulSoup, Tag
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit, urlunsplit
 
 
 BAIKE_HTML_PATH = Path(__file__).resolve().parents[2] / 'data' / 'chengfengpolang_season1_baike.html'
 STARS_JSON_PATH = Path(__file__).resolve().parents[2] / 'data' / 'stars.json'
+STARS_INFO_JSON_PATH = Path(__file__).resolve().parents[2] / 'data' / 'stars_info.json'
 BAIKE_BASE_URL = 'https://baike.baidu.com'
 
 
@@ -128,6 +130,76 @@ def pare_wiki_data(table: Optional[Tag], output_path=STARS_JSON_PATH) -> List[Di
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(stars, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
     return stars
+
+
+def crawl_everyone_wiki_urls() -> None:
+    """爬取每位参赛嘉宾的基本信息，并保存为 JSON。"""
+    with STARS_JSON_PATH.open('r', encoding='UTF-8') as file:
+        json_array = json.load(file)
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 '
+                      '(KHTML, like Gecko) Chrome/67.0.3396.99 Safari/537.36'
+    }
+    star_infos = []
+    for index, star in enumerate(json_array):
+        if index:
+            time.sleep(1)  # 顺序请求并留出间隔，避免短时间内密集访问。
+        star_info = {}
+        name = star['name']
+        link = star['link']
+        star_info['name'] = name
+        # 使用同一词条的官方移动入口，桌面入口在当前环境中返回安全验证页。
+        parts = urlsplit(link)
+        link = urlunsplit(('https', 'wapbaike.baidu.com', parts.path, '', ''))
+        response = requests.get(link, headers=headers, timeout=20)
+        if response.status_code == 403:
+            raise RuntimeError('{}的百科页面拒绝访问（HTTP 403），无法采集个人信息：{}'.format(name, link))
+        response.raise_for_status()
+        response.encoding = 'utf-8'
+        bs = BeautifulSoup(response.text, 'lxml')
+
+        # 新版移动页把基本信息存入内嵌 JSON，已不使用文档中的 dl、dt、dd 标签。
+        data_tag = bs.find('script', id='__NEXT_DATA__')
+        if not isinstance(data_tag, Tag) or not data_tag.string:
+            raise ValueError('{}的页面缺少个人信息数据，可能返回了安全验证页'.format(name))
+        page_data = json.loads(str(data_tag.string))['props']['pageProps']['pageData']
+        if str(page_data.get('lemmaId')) != parts.path.rstrip('/').split('/')[-1]:
+            raise ValueError('{}的返回词条 ID 与请求不符'.format(name))
+        fields = page_data.get('card', {}).get('content', [])
+        if not fields:
+            raise ValueError('{}的页面没有基本信息卡片'.format(name))
+        for item in fields:
+            field = ''.join(item.get('title', '').split())
+            # 只读取字段的文字与内链文字，排除参考文献序号，避免污染数值。
+            value = ''.join(
+                text.get('text', '')
+                for data in item.get('data', [])
+                for text in data.get('text', [])
+                if text.get('tag') in ('text', 'innerlink')
+            ).replace('\n', '').strip()
+            if field == '民族':
+                star_info['nation'] = value
+            if field == '星座':
+                star_info['constellation'] = value
+            if field == '血型':
+                star_info['blood_type'] = value
+            if field == '身高':
+                star_info['height'] = value.split('cm', 1)[0].strip()
+            if field == '体重':
+                # 基本信息卡片未提供体重时，JSON 中省略 weight 字段，不填 0 或 null。
+                star_info['weight'] = value
+            if field == '出生日期':
+                if '年' in value:
+                    star_info['birth_day'] = value[:value.rfind('年')]
+        star_infos.append(star_info)
+        missing = [key for key in ('birth_day', 'weight', 'height') if not star_info.get(key)]
+        print('已采集 {}/{}：{}{}'.format(
+            index + 1, len(json_array), name, '，页面未提供：' + '、'.join(missing) if missing else ''
+        ))
+
+        # 每处理完一位嘉宾就保存当前结果，直接序列化列表以保留原始中文内容。
+        with STARS_INFO_JSON_PATH.open('w', encoding='UTF-8') as file:
+            json.dump(star_infos, file, ensure_ascii=False, indent=2)
 
 
 """
