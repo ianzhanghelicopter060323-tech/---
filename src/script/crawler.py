@@ -7,7 +7,8 @@ from typing import Dict, List, Optional, Tuple
 from urllib.parse import quote, urlsplit, urlunsplit
 
 
-BAIKE_HTML_PATH = Path(__file__).resolve().parents[2] / 'data' / 'chengfengpolang_season1_baike.html'
+# 原教程对应第一季；明确词条 ID，避免通用节目名跳到包含多季的系列总页。
+BAIKE_URL = 'https://wapbaike.baidu.com/item/乘风破浪的姐姐第一季/55724490'
 STARS_JSON_PATH = Path(__file__).resolve().parents[2] / 'data' / 'stars.json'
 STARS_INFO_JSON_PATH = Path(__file__).resolve().parents[2] / 'data' / 'stars_info.json'
 BAIKE_BASE_URL = 'https://baike.baidu.com'
@@ -59,19 +60,28 @@ def _guest_lemma_ids(soup: BeautifulSoup) -> Dict[str, int]:
     raise ValueError('没有找到“参演嘉宾 - 按姓氏首字母排序”表格数据')
 
 
-def craw_wiki_data(html_path=BAIKE_HTML_PATH) -> Tag:
-    """读取本地第一季百科 HTML，返回“按姓氏首字母排序”的参赛嘉宾表格。
+def crawl_wiki_data() -> Tag:
+    """联网爬取第一季百科，返回“按姓氏首字母排序”的参赛嘉宾表格。
 
     新版百度百科把词条链接放在 ``__NEXT_DATA__`` 中；本函数读取该数据，并
-    将每位嘉宾的 lemma ID 标记到对应表格节点，供 ``pare_wiki_data`` 使用。
+    将每位嘉宾的 lemma ID 标记到对应表格节点，供 ``parse_wiki_data`` 使用。
     """
-    # 读取上一阶段已保存的网页，避免再次访问百度百科而触发安全验证。
-    path = Path(html_path)
-    if not path.is_file():
-        raise FileNotFoundError('找不到已抓取的百科 HTML：{}'.format(path))
-
-    # 将本地 HTML 转为 BeautifulSoup 文档对象，便于按标签查找嘉宾表。
-    soup = BeautifulSoup(path.read_text(encoding='utf-8'), 'lxml')
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 '
+                      '(KHTML, like Gecko) Chrome/67.0.3396.99 Safari/537.36'
+    }
+    # 桌面入口曾返回 403，使用已验证的官方移动入口；HTML 只在内存中解析，不落盘。
+    response = requests.get(BAIKE_URL, headers=headers, timeout=20)
+    response.raise_for_status()
+    response.encoding = 'utf-8'
+    # 将响应 HTML 传入 BeautifulSoup，后续仍按文档先找嘉宾表、再解析保存 JSON。
+    soup = BeautifulSoup(response.text, 'lxml')
+    data_tag = soup.find('script', id='__NEXT_DATA__')
+    if not isinstance(data_tag, Tag) or not data_tag.string:
+        raise ValueError('节目页面缺少 __NEXT_DATA__，可能返回了安全验证页')
+    page_data = json.loads(str(data_tag.string))['props']['pageProps']['pageData']
+    if str(page_data.get('lemmaId')) != '55724490':
+        raise ValueError('节目页面不是预期的第一季词条')
     # 逐个检查 div 的完整文本，避免 BeautifulSoup 的 find(string=回调) 类型重载歧义。
     caption = None
     for div in soup.find_all('div'):
@@ -103,7 +113,7 @@ def craw_wiki_data(html_path=BAIKE_HTML_PATH) -> Tag:
     return table
 
 
-def pare_wiki_data(table: Optional[Tag], output_path=STARS_JSON_PATH) -> List[Dict[str, str]]:
+def parse_wiki_data(table: Optional[Tag], output_path=STARS_JSON_PATH) -> List[Dict[str, str]]:
     """解析参赛嘉宾表，保存姓名和个人百度百科链接到 ``data/stars.json``。"""
     if table is None:
         raise ValueError('没有可解析的嘉宾表')
